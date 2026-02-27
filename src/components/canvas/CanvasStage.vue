@@ -1,0 +1,393 @@
+<template>
+  <div class="canvas-stage" ref="stageRef" @mousedown="onStageMousedown" @mousemove="onMouseMove" @mouseup="onMouseUp" @wheel="onWheel" @contextmenu.prevent="onContextMenu" @dblclick="onDblClick">
+    <!-- Grid -->
+    <svg v-if="store.showGrid" class="canvas-grid" :width="stageW" :height="stageH">
+      <defs>
+        <pattern :id="`grid-small-${instanceId}`" :width="gridSmall" :height="gridSmall" patternUnits="userSpaceOnUse">
+          <path :d="`M ${gridSmall} 0 L 0 0 0 ${gridSmall}`" fill="none" stroke="#e8e8f0" stroke-width="0.5"/>
+        </pattern>
+        <pattern :id="`grid-large-${instanceId}`" :width="gridLarge" :height="gridLarge" patternUnits="userSpaceOnUse">
+          <rect :width="gridLarge" :height="gridLarge" :fill="`url(#grid-small-${instanceId})`"/>
+          <path :d="`M ${gridLarge} 0 L 0 0 0 ${gridLarge}`" fill="none" stroke="#d0d0e0" stroke-width="1"/>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" :fill="`url(#grid-large-${instanceId})`"/>
+    </svg>
+
+    <!-- Canvas transform wrapper -->
+    <div class="canvas-transform" :style="transformStyle">
+      <!-- Page background -->
+      <div class="page-canvas" :style="pageStyle" @mousedown.stop="onPageBgClick">
+        <!-- Elements -->
+        <template v-for="el in sortedElements" :key="el.id">
+          <ElementRenderer
+            :element="el"
+            :selected="store.selectedIds.includes(el.id)"
+            :editing="store.editingTextId === el.id"
+            :zoom="store.zoom"
+            @mousedown.stop="onElementMousedown($event, el)"
+            @dblclick.stop="onElementDblClick($event, el)"
+            @update="onElementUpdate(el.id, $event)"
+            @endEdit="store.editingTextId = null"
+          />
+        </template>
+
+        <!-- Selection Box -->
+        <SelectionBox v-if="store.selectedIds.length > 0 && !store.editingTextId" :selectedIds="store.selectedIds" :elements="currentPage.elements" :zoom="store.zoom" @resize="onSelectionResize" @move="onSelectionMove" />
+
+        <!-- Rubber band selection -->
+        <div v-if="rubberBand.active" class="rubber-band" :style="rubberBandStyle"></div>
+      </div>
+    </div>
+
+    <!-- Context Menu -->
+    <ContextMenu v-if="contextMenu.show" :x="contextMenu.x" :y="contextMenu.y" :hasSelection="store.selectedIds.length > 0" @close="contextMenu.show = false" @action="handleContextAction" />
+
+    <!-- Zoom indicator -->
+    <div class="zoom-indicator">{{ Math.round(store.zoom * 100) }}%</div>
+
+    <!-- Quick zoom controls -->
+    <div class="zoom-controls">
+      <button @click="zoomIn" title="放大">+</button>
+      <button @click="resetZoom" title="重置">⊙</button>
+      <button @click="zoomOut" title="缩小">−</button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
+import { v4 as uuidv4 } from 'uuid'
+import { store, currentPage, sortedElements, selectElement, updateElement, removeSelected, duplicateSelected, copySelected, paste, setZoom, undo, redo, saveHistory, bringToFront, sendToBack, bringForward, sendBackward } from '../../store/editorStore.js'
+import ElementRenderer from './ElementRenderer.vue'
+import SelectionBox from './SelectionBox.vue'
+import ContextMenu from './ContextMenu.vue'
+
+const instanceId = uuidv4().slice(0,8)
+const stageRef = ref(null)
+const stageW = ref(window.innerWidth)
+const stageH = ref(window.innerHeight)
+
+const gridSmall = computed(() => store.gridSize * store.zoom)
+const gridLarge = computed(() => store.gridSize * 8 * store.zoom)
+
+const transformStyle = computed(() => ({
+  transform: `translate(${store.panX}px, ${store.panY}px) scale(${store.zoom})`,
+  transformOrigin: '0 0',
+}))
+
+const pageStyle = computed(() => ({
+  width: (currentPage.value?.width || 1440) + 'px',
+  height: (currentPage.value?.height || 900) + 'px',
+  background: currentPage.value?.background || '#ffffff',
+  position: 'relative',
+  overflow: 'hidden',
+}))
+
+const contextMenu = reactive({ show: false, x: 0, y: 0 })
+const rubberBand = reactive({ active: false, startX: 0, startY: 0, x: 0, y: 0, w: 0, h: 0 })
+const rubberBandStyle = computed(() => ({
+  position: 'absolute',
+  left: rubberBand.x + 'px',
+  top: rubberBand.y + 'px',
+  width: rubberBand.w + 'px',
+  height: rubberBand.h + 'px',
+  border: '1.5px dashed #4F8EF7',
+  background: 'rgba(79,142,247,0.08)',
+  pointerEvents: 'none',
+  zIndex: 99999,
+}))
+
+let isPanning = false
+let panStart = { x: 0, y: 0 }
+let isDraggingElement = false
+let dragStart = { x: 0, y: 0 }
+let elementsStartPos = []
+let spaceDown = false
+
+function screenToCanvas(sx, sy) {
+  const rect = stageRef.value?.getBoundingClientRect() || { left: 0, top: 0 }
+  return {
+    x: (sx - rect.left - store.panX) / store.zoom,
+    y: (sy - rect.top - store.panY) / store.zoom,
+  }
+}
+
+function onStageMousedown(e) {
+  if (e.button === 1 || (e.button === 0 && spaceDown)) {
+    isPanning = true
+    panStart = { x: e.clientX - store.panX, y: e.clientY - store.panY }
+    e.preventDefault()
+    return
+  }
+  if (e.button === 0 && store.tool === 'select') {
+    const cp = screenToCanvas(e.clientX, e.clientY)
+    rubberBand.active = true
+    rubberBand.startX = cp.x
+    rubberBand.startY = cp.y
+    rubberBand.x = cp.x
+    rubberBand.y = cp.y
+    rubberBand.w = 0
+    rubberBand.h = 0
+  }
+}
+
+function onPageBgClick(e) {
+  if (!isDraggingElement) {
+    selectElement(null)
+    store.editingTextId = null
+  }
+}
+
+function onElementMousedown(e, el) {
+  if (e.button !== 0) return
+  if (el.locked) return
+  if (store.editingTextId === el.id) return
+
+  if (!store.selectedIds.includes(el.id)) {
+    selectElement(el.id, e.shiftKey || e.metaKey || e.ctrlKey)
+  } else if (e.shiftKey || e.metaKey || e.ctrlKey) {
+    selectElement(el.id, true)
+    return
+  }
+
+  isDraggingElement = true
+  store.isDragging = true
+  dragStart = { x: e.clientX, y: e.clientY }
+  elementsStartPos = store.selectedIds.map(id => {
+    const found = currentPage.value.elements.find(e2 => e2.id === id)
+    return found ? { id, x: found.x, y: found.y } : null
+  }).filter(Boolean)
+
+  const onUp = () => {
+    if (isDraggingElement) saveHistory()
+    isDraggingElement = false
+    store.isDragging = false
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mouseup', onUp)
+}
+
+function onElementDblClick(e, el) {
+  if (el.type === 'text' || el.type === 'button' || el.type === 'navbar') {
+    store.editingTextId = el.id
+  }
+}
+
+function onDblClick(e) {}
+
+function onMouseMove(e) {
+  if (isPanning) {
+    store.panX = e.clientX - panStart.x
+    store.panY = e.clientY - panStart.y
+    return
+  }
+  if (isDraggingElement) {
+    const dx = (e.clientX - dragStart.x) / store.zoom
+    const dy = (e.clientY - dragStart.y) / store.zoom
+    elementsStartPos.forEach(({ id, x, y }) => {
+      let nx = x + dx
+      let ny = y + dy
+      if (store.snapToGrid) {
+        nx = Math.round(nx / store.gridSize) * store.gridSize
+        ny = Math.round(ny / store.gridSize) * store.gridSize
+      }
+      updateElement(id, { x: nx, y: ny })
+    })
+    return
+  }
+  if (rubberBand.active) {
+    const cp = screenToCanvas(e.clientX, e.clientY)
+    const x = Math.min(cp.x, rubberBand.startX)
+    const y = Math.min(cp.y, rubberBand.startY)
+    const w = Math.abs(cp.x - rubberBand.startX)
+    const h = Math.abs(cp.y - rubberBand.startY)
+    rubberBand.x = x
+    rubberBand.y = y
+    rubberBand.w = w
+    rubberBand.h = h
+  }
+}
+
+function onMouseUp(e) {
+  if (isPanning) { isPanning = false; return }
+  if (rubberBand.active) {
+    if (rubberBand.w > 5 || rubberBand.h > 5) {
+      const ids = currentPage.value.elements.filter(el => {
+        return el.x < rubberBand.x + rubberBand.w &&
+          el.x + el.width > rubberBand.x &&
+          el.y < rubberBand.y + rubberBand.h &&
+          el.y + el.height > rubberBand.y
+      }).map(el => el.id)
+      store.selectedIds = ids
+    } else {
+      if (!isDraggingElement) selectElement(null)
+    }
+    rubberBand.active = false
+    rubberBand.w = 0
+    rubberBand.h = 0
+  }
+}
+
+function onWheel(e) {
+  e.preventDefault()
+  if (e.ctrlKey || e.metaKey) {
+    const delta = e.deltaY > 0 ? 0.9 : 1.1
+    const rect = stageRef.value.getBoundingClientRect()
+    const mx = e.clientX - rect.left
+    const my = e.clientY - rect.top
+    const newZoom = Math.min(Math.max(store.zoom * delta, 0.1), 5)
+    store.panX = mx - (mx - store.panX) * (newZoom / store.zoom)
+    store.panY = my - (my - store.panY) * (newZoom / store.zoom)
+    store.zoom = newZoom
+  } else {
+    store.panX -= e.deltaX
+    store.panY -= e.deltaY
+  }
+}
+
+function onContextMenu(e) {
+  contextMenu.show = true
+  contextMenu.x = e.clientX
+  contextMenu.y = e.clientY
+}
+
+function handleContextAction(action) {
+  contextMenu.show = false
+  switch (action) {
+    case 'copy': copySelected(); break
+    case 'paste': paste(); break
+    case 'duplicate': duplicateSelected(); break
+    case 'delete': removeSelected(); break
+    case 'bringForward': store.selectedIds.forEach(id => bringForward(id)); break
+    case 'sendBackward': store.selectedIds.forEach(id => sendBackward(id)); break
+    case 'bringToFront': store.selectedIds.forEach(id => bringToFront(id)); break
+    case 'sendToBack': store.selectedIds.forEach(id => sendToBack(id)); break
+  }
+}
+
+function onSelectionResize({ id, x, y, w, h }) {
+  updateElement(id, { x, y, width: w, height: h })
+}
+
+function onSelectionMove({ dx, dy }) {
+  store.selectedIds.forEach(id => {
+    const el = currentPage.value.elements.find(e => e.id === id)
+    if (el) updateElement(id, { x: el.x + dx, y: el.y + dy })
+  })
+  saveHistory()
+}
+
+function zoomIn() { setZoom(store.zoom * 1.2) }
+function zoomOut() { setZoom(store.zoom / 1.2) }
+function resetZoom() { store.zoom = 1; store.panX = 40; store.panY = 40 }
+
+function onKeydown(e) {
+  if (e.code === 'Space' && !store.editingTextId) { spaceDown = true; e.preventDefault() }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { undo(); e.preventDefault() }
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { redo(); e.preventDefault() }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'c') { copySelected(); e.preventDefault() }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'v') { paste(); e.preventDefault() }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'd') { duplicateSelected(); e.preventDefault() }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !store.editingTextId) { removeSelected(); e.preventDefault() }
+  if (e.key === 'Escape') { store.selectedIds = []; store.editingTextId = null }
+  if (e.key === 'ArrowLeft' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { x: el.x - (e.shiftKey ? 10 : 1) }) }) }
+  if (e.key === 'ArrowRight' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { x: el.x + (e.shiftKey ? 10 : 1) }) }) }
+  if (e.key === 'ArrowUp' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { y: el.y - (e.shiftKey ? 10 : 1) }) }); e.preventDefault() }
+  if (e.key === 'ArrowDown' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { y: el.y + (e.shiftKey ? 10 : 1) }) }); e.preventDefault() }
+}
+
+function onKeyup(e) {
+  if (e.code === 'Space') spaceDown = false
+}
+
+function onResize() {
+  stageW.value = window.innerWidth
+  stageH.value = window.innerHeight
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
+  window.addEventListener('resize', onResize)
+  store.panX = 40
+  store.panY = 40
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keyup', onKeyup)
+  window.removeEventListener('resize', onResize)
+})
+</script>
+
+<style scoped>
+.canvas-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #f0f0f5;
+  cursor: default;
+  user-select: none;
+}
+.canvas-grid {
+  position: absolute;
+  top: 0; left: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.canvas-transform {
+  position: absolute;
+  top: 0; left: 0;
+  z-index: 1;
+}
+.page-canvas {
+  box-shadow: 0 4px 40px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.08);
+  border-radius: 2px;
+}
+.rubber-band {
+  border-radius: 2px;
+}
+.zoom-indicator {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30,30,50,0.75);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  pointer-events: none;
+  z-index: 1000;
+  font-family: 'Inter', monospace;
+  backdrop-filter: blur(4px);
+}
+.zoom-controls {
+  position: absolute;
+  bottom: 16px;
+  right: 24px;
+  display: flex;
+  gap: 4px;
+  z-index: 1000;
+}
+.zoom-controls button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e0e0e8;
+  background: rgba(255,255,255,0.92);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  color: #444;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+  backdrop-filter: blur(8px);
+}
+.zoom-controls button:hover {
+  background: #fff;
+  border-color: #4F8EF7;
+  color: #4F8EF7;
+}
+</style>
