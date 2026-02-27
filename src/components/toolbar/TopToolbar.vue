@@ -81,9 +81,11 @@
                   <span>显示元素尺寸标注</span>
                 </label>
               </div>
-              <button class="generate-btn" @click="generateLink">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                生成分享链接
+              <div v-if="generateError" class="generate-error">⚠️ {{ generateError }}</div>
+              <button class="generate-btn" @click="generateLink" :disabled="isGenerating">
+                <svg v-if="!isGenerating" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <svg v-else class="spin-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                {{ isGenerating ? '正在生成...' : '生成分享链接' }}
               </button>
             </div>
             <div v-else class="share-result">
@@ -121,11 +123,23 @@ const linkInputRef = ref(null)
 const projectTitle = ref('未命名原型')
 const shareCanInteract = ref(true)
 const shareShowDimensions = ref(false)
+const isGenerating = ref(false)
+const generateError = ref('')
 
 const totalElements = computed(() => store.pages.reduce((sum, p) => sum + (p.elements?.length || 0), 0))
 
-function generateLink() {
-  shareLink.value = generateShareLink()
+async function generateLink() {
+  if (isGenerating.value) return
+  isGenerating.value = true
+  generateError.value = ''
+  try {
+    const { url } = await generateShareLink()
+    shareLink.value = url
+  } catch (err) {
+    generateError.value = err.message || '生成失败，请重试'
+  } finally {
+    isGenerating.value = false
+  }
 }
 
 function copyLink() {
@@ -144,9 +158,17 @@ function openShareLink() {
   window.open(shareLink.value, '_blank')
 }
 
-function openPreview() {
-  const link = generateShareLink()
-  window.open(link, '_blank')
+async function openPreview() {
+  isGenerating.value = true
+  generateError.value = ''
+  try {
+    const { url } = await generateShareLink()
+    window.open(url, '_blank')
+  } catch (err) {
+    generateError.value = err.message || '生成预览失败，请重试'
+  } finally {
+    isGenerating.value = false
+  }
 }
 </script>
 
@@ -208,4 +230,8 @@ function openPreview() {
 .open-link-btn:hover { border-color: #4F8EF7; color: #4F8EF7; }
 .regenerate-btn { padding: 9px 14px; background: none; border: 1px solid #2a2a3e; color: #6b7280; border-radius: 8px; cursor: pointer; font-size: 12px; transition: all 0.15s; }
 .regenerate-btn:hover { border-color: #6b7280; color: #9ca3af; }
+.generate-error { color: #f87171; font-size: 12px; text-align: center; margin-bottom: 10px; padding: 8px; background: rgba(239,68,68,0.1); border-radius: 6px; border: 1px solid rgba(239,68,68,0.2); }
+.generate-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.spin-icon { animation: spin-anim 1s linear infinite; }
+@keyframes spin-anim { to { transform: rotate(360deg); } }
 </style>

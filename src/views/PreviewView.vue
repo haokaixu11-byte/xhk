@@ -123,13 +123,13 @@ function formatDate(iso) {
   } catch { return '' }
 }
 
-onMounted(() => {
+onMounted(async () => {
   const hash = window.location.hash
   const match = hash.match(/\/preview\/([a-zA-Z0-9]+)/)
   if (match) {
     const shareId = match[1]
-    setTimeout(() => {
-      const data = loadSharedProject(shareId)
+    try {
+      const data = await loadSharedProject(shareId)
       if (data) {
         project.value = data
         loading.value = false
@@ -137,7 +137,10 @@ onMounted(() => {
         error.value = true
         loading.value = false
       }
-    }, 600)
+    } catch (_) {
+      error.value = true
+      loading.value = false
+    }
   } else {
     error.value = true
     loading.value = false

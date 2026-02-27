@@ -210,32 +210,66 @@ export function redo() {
   store.selectedIds = []
 }
 
-export function generateShareLink() {
-  const shareId = uuidv4().replace(/-/g, '').slice(0, 12)
-  const projectData = {
-    id: shareId,
+// Cloudflare Worker API 地址
+const API_BASE = 'https://protoflow-api.protoflow-api.workers.dev'
+
+/**
+ * 生成分享链接（异步，数据存到 Cloudflare KV）
+ * 返回 { url, shareId } 或抛出错误
+ */
+export async function generateShareLink() {
+  const payload = {
+    shareId: store.activeShareId || undefined,  // 已有 shareId 则更新同一条记录
+    title: '高保真原型',
     pages: JSON.parse(JSON.stringify(store.pages)),
     createdAt: new Date().toISOString(),
-    title: '高保真原型',
   }
-  localStorage.setItem(`proto_share_${shareId}`, JSON.stringify(projectData))
-  store.shareLinks[shareId] = projectData
+
+  const res = await fetch(`${API_BASE}/api/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `服务器错误 ${res.status}`)
+  }
+
+  const { shareId } = await res.json()
   store.activeShareId = shareId
-  const baseUrl = window.location.origin + window.location.pathname
-  return `${baseUrl}#/preview/${shareId}`
+
+  // 同时存本地做离线备份（可选）
+  try {
+    localStorage.setItem(`proto_share_${shareId}`, JSON.stringify(payload))
+  } catch (_) {}
+
+  const baseUrl = 'https://protoflow-editor.pages.dev'
+  return { url: `${baseUrl}/#/preview/${shareId}`, shareId }
 }
 
-export function loadSharedProject(shareId) {
-  const data = localStorage.getItem(`proto_share_${shareId}`)
-  if (data) {
-    try {
-      return JSON.parse(data)
-    } catch {
-      return null
+/**
+ * 加载分享的原型数据（先查远端，降级查 localStorage）
+ */
+export async function loadSharedProject(shareId) {
+  // 1. 优先从远端 KV 读取
+  try {
+    const res = await fetch(`${API_BASE}/api/share/${shareId}`)
+    if (res.ok) {
+      const { data } = await res.json()
+      return data
     }
-  }
+  } catch (_) {}
+
+  // 2. 降级：从 localStorage 读取（兼容旧的本地分享）
+  try {
+    const raw = localStorage.getItem(`proto_share_${shareId}`)
+    if (raw) return JSON.parse(raw)
+  } catch (_) {}
+
   return null
 }
+
 
 export function copySelected() {
   store.clipboard = JSON.parse(JSON.stringify(store.selectedIds.map(id => currentPage.value.elements.find(e => e.id === id)).filter(Boolean)))

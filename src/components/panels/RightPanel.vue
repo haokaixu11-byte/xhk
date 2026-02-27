@@ -24,7 +24,12 @@
       <!-- Element Name & Type -->
       <div class="el-header">
         <span class="el-type-badge">{{ typeLabel }}</span>
-        <input class="el-name-input" v-model="elementName" @change="commitProp('name', elementName)" placeholder="元素名称" />
+        <input
+          class="el-name-input"
+          v-model="elementName"
+          @blur="commitElementName"
+          placeholder="元素名称"
+        />
       </div>
 
       <!-- Position & Size -->
@@ -244,10 +249,39 @@ const typeLabels = { rectangle: '矩形', circle: '圆形', triangle: '三角形
 const typeLabel = computed(() => typeLabels[sel.value?.type] || sel.value?.type || '')
 const hasText = computed(() => ['text', 'button', 'navbar', 'input'].includes(sel.value?.type))
 
-const elementName = ref('')
-watch(sel, (v) => { if (v) elementName.value = v.name || '' })
+// ─── 元素名称 与 text/placeholder 保持完全双向同步 ───────────────────────────
+// "元素名称"框始终显示并编辑当前组件的主文字内容（text 或 placeholder），
+// 画布里修改文字时它也跟着变；在名称框输入时同步写回 text/placeholder。
 
-// Computed v-model helpers for text fields — keep UI in sync with store
+// 判断当前选中元素使用哪个字段作为"主文字"
+const textField = computed(() => {
+  if (!sel.value) return null
+  if (sel.value.type === 'input') return 'placeholder'
+  if (['text', 'button', 'navbar'].includes(sel.value.type)) return 'text'
+  return null  // 非文字类组件（矩形、圆形等）不做联动
+})
+
+// elementName：双向绑定到 element[textField]
+// get → 永远从 store 读最新值，保证画布改完后名称框立即刷新
+// set → 写回 store（实时，不保存历史；blur 时 commitProp 存历史）
+const elementName = computed({
+  get: () => {
+    const f = textField.value
+    if (f && sel.value) return sel.value[f] ?? ''
+    // 非文字类：显示 element.name
+    return sel.value?.name ?? ''
+  },
+  set: (v) => {
+    const f = textField.value
+    if (f && sel.value) {
+      updateProp(f, v)      // 同步到 text/placeholder
+    } else if (sel.value) {
+      updateProp('name', v) // 非文字类：只改 name
+    }
+  },
+})
+
+// v-model helpers for the dedicated text-content section (同样双向)
 const selText = computed({
   get: () => sel.value?.text ?? '',
   set: (v) => updateProp('text', v),
@@ -267,6 +301,17 @@ function commitProp(key, value) {
   if (sel.value) {
     updateElement(sel.value.id, { [key]: value })
     saveHistory()
+  }
+}
+
+// 元素名称框 blur 时：把最新值同时写回 text/placeholder（视类型）并保存历史
+function commitElementName() {
+  if (!sel.value) return
+  const f = textField.value
+  if (f) {
+    commitProp(f, sel.value[f] ?? '')  // text 或 placeholder 已通过 v-model set 实时写入，这里只触发 saveHistory
+  } else {
+    commitProp('name', sel.value.name ?? '')
   }
 }
 
