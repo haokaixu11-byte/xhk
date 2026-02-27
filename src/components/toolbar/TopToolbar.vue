@@ -1,5 +1,5 @@
 <template>
-  <header class="toolbar">
+  <header class="toolbar" @keydown.stop @keyup.stop>
     <!-- Logo -->
     <div class="toolbar-logo">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none">

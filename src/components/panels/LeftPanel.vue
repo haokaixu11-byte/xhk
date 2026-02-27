@@ -1,5 +1,5 @@
 <template>
-  <aside class="left-panel">
+  <aside class="left-panel" @keydown.stop @keyup.stop>
     <!-- Tabs -->
     <div class="panel-tabs">
       <button :class="{ active: tab === 'components' }" @click="tab = 'components'">组件</button>

@@ -1,5 +1,5 @@
 <template>
-  <aside class="right-panel">
+  <aside class="right-panel" @keydown.stop @keyup.stop>
     <div v-if="!sel" class="no-selection">
       <div class="no-sel-icon">☰</div>
       <div>选择元素以编辑属性</div>
@@ -24,7 +24,7 @@
       <!-- Element Name & Type -->
       <div class="el-header">
         <span class="el-type-badge">{{ typeLabel }}</span>
-        <input class="el-name-input" v-model="elementName" @change="updateProp('name', elementName)" placeholder="元素名称" />
+        <input class="el-name-input" v-model="elementName" @change="commitProp('name', elementName)" placeholder="元素名称" />
       </div>
 
       <!-- Position & Size -->
@@ -33,29 +33,29 @@
         <div class="prop-grid-4">
           <div class="prop-cell">
             <label>X</label>
-            <input type="number" :value="Math.round(sel.x)" @change="updateProp('x', +$event.target.value)" class="num-input" />
+            <input type="number" :value="Math.round(sel.x)" @change="commitProp('x', +$event.target.value)" class="num-input" />
           </div>
           <div class="prop-cell">
             <label>Y</label>
-            <input type="number" :value="Math.round(sel.y)" @change="updateProp('y', +$event.target.value)" class="num-input" />
+            <input type="number" :value="Math.round(sel.y)" @change="commitProp('y', +$event.target.value)" class="num-input" />
           </div>
           <div class="prop-cell">
             <label>W</label>
-            <input type="number" :value="Math.round(sel.width)" @change="updateProp('width', +$event.target.value)" class="num-input" min="1" />
+            <input type="number" :value="Math.round(sel.width)" @change="commitProp('width', +$event.target.value)" class="num-input" min="1" />
           </div>
           <div class="prop-cell">
             <label>H</label>
-            <input type="number" :value="Math.round(sel.height)" @change="updateProp('height', +$event.target.value)" class="num-input" min="1" />
+            <input type="number" :value="Math.round(sel.height)" @change="commitProp('height', +$event.target.value)" class="num-input" min="1" />
           </div>
         </div>
         <div class="prop-grid-2">
           <div class="prop-cell">
             <label>旋转</label>
-            <div class="input-suffix"><input type="number" :value="sel.rotation || 0" @change="updateProp('rotation', +$event.target.value)" class="num-input" /><span>°</span></div>
+            <div class="input-suffix"><input type="number" :value="sel.rotation || 0" @change="commitProp('rotation', +$event.target.value)" class="num-input" /><span>°</span></div>
           </div>
           <div class="prop-cell">
             <label>圆角</label>
-            <input type="number" :value="sel.borderRadius || 0" @change="updateProp('borderRadius', +$event.target.value)" class="num-input" min="0" />
+            <input type="number" :value="sel.borderRadius || 0" @change="commitProp('borderRadius', +$event.target.value)" class="num-input" min="0" />
           </div>
         </div>
       </div>
@@ -65,7 +65,7 @@
         <div class="section-title">透明度</div>
         <div class="opacity-row">
           <input type="range" min="0" max="100" :value="sel.opacity ?? 100" @input="updateProp('opacity', +$event.target.value)" class="range-input" />
-          <input type="number" :value="sel.opacity ?? 100" @change="updateProp('opacity', Math.min(100, Math.max(0, +$event.target.value)))" class="num-input small" min="0" max="100" />
+          <input type="number" :value="sel.opacity ?? 100" @change="commitProp('opacity', Math.min(100, Math.max(0, +$event.target.value)))" class="num-input small" min="0" max="100" />
         </div>
       </div>
 
@@ -76,23 +76,23 @@
           <label>填充</label>
           <div class="color-row">
             <input type="color" :value="sel.fill || '#ffffff'" @input="updateProp('fill', $event.target.value)" class="color-input" />
-            <input class="text-input" :value="sel.fill || '#ffffff'" @change="updateProp('fill', $event.target.value)" />
+            <input class="text-input" :value="sel.fill || '#ffffff'" @change="commitProp('fill', $event.target.value)" />
           </div>
         </div>
         <div class="prop-row">
           <label>描边</label>
           <div class="color-row">
             <input type="color" :value="sel.stroke || '#000000'" @input="updateProp('stroke', $event.target.value)" class="color-input" />
-            <input class="text-input" :value="sel.stroke || 'transparent'" @change="updateProp('stroke', $event.target.value)" />
+            <input class="text-input" :value="sel.stroke || 'transparent'" @change="commitProp('stroke', $event.target.value)" />
           </div>
         </div>
         <div class="prop-row">
           <label>描边宽</label>
-          <input type="number" :value="sel.strokeWidth || 0" @change="updateProp('strokeWidth', +$event.target.value)" class="num-input" min="0" />
+          <input type="number" :value="sel.strokeWidth || 0" @change="commitProp('strokeWidth', +$event.target.value)" class="num-input" min="0" />
         </div>
         <div class="prop-row" v-if="sel.type === 'card'">
           <label>阴影</label>
-          <label class="toggle"><input type="checkbox" :checked="sel.shadow" @change="updateProp('shadow', $event.target.checked)" /><span></span></label>
+          <label class="toggle"><input type="checkbox" :checked="sel.shadow" @change="commitProp('shadow', $event.target.checked)" /><span></span></label>
         </div>
       </div>
 
@@ -103,14 +103,14 @@
           <label>填充</label>
           <div class="color-row">
             <input type="color" :value="sel.fill || '#4F8EF7'" @input="updateProp('fill', $event.target.value)" class="color-input" />
-            <input class="text-input" :value="sel.fill || '#4F8EF7'" @change="updateProp('fill', $event.target.value)" />
+            <input class="text-input" :value="sel.fill || '#4F8EF7'" @change="commitProp('fill', $event.target.value)" />
           </div>
         </div>
         <div class="prop-row">
           <label>描边</label>
           <div class="color-row">
             <input type="color" :value="sel.stroke || '#000000'" @input="updateProp('stroke', $event.target.value)" class="color-input" />
-            <input type="number" :value="sel.strokeWidth || 0" @change="updateProp('strokeWidth', +$event.target.value)" class="num-input" min="0" style="width:52px" />
+            <input type="number" :value="sel.strokeWidth || 0" @change="commitProp('strokeWidth', +$event.target.value)" class="num-input" min="0" style="width:52px" />
           </div>
         </div>
       </div>
@@ -120,32 +120,36 @@
         <div class="section-title">文字</div>
         <div class="prop-row" v-if="sel.type === 'text'">
           <label>内容</label>
-          <textarea class="text-area" :value="sel.text" @input="updateProp('text', $event.target.value)" rows="3"></textarea>
+          <textarea class="text-area" :value="sel.text" @input="updateProp('text', $event.target.value)" @blur="commitProp('text', sel.text)" rows="3"></textarea>
+        </div>
+        <div v-else-if="sel.type === 'input'" class="prop-row">
+          <label>占位符</label>
+          <input class="text-input" :value="sel.placeholder" @input="updateProp('placeholder', $event.target.value)" @blur="commitProp('placeholder', sel.placeholder)" placeholder="请输入内容..." />
         </div>
         <div v-else class="prop-row">
           <label>内容</label>
-          <input class="text-input" :value="sel.text" @change="updateProp('text', $event.target.value)" />
+          <input class="text-input" :value="sel.text" @input="updateProp('text', $event.target.value)" @blur="commitProp('text', sel.text)" />
         </div>
         <div class="prop-row">
           <label>颜色</label>
           <div class="color-row">
             <input type="color" :value="sel.color || '#1a1a2e'" @input="updateProp('color', $event.target.value)" class="color-input" />
-            <input class="text-input" :value="sel.color || '#1a1a2e'" @change="updateProp('color', $event.target.value)" />
+            <input class="text-input" :value="sel.color || '#1a1a2e'" @change="commitProp('color', $event.target.value)" />
           </div>
         </div>
         <div class="prop-grid-2">
           <div class="prop-cell">
             <label>字号</label>
-            <input type="number" :value="sel.fontSize || 16" @change="updateProp('fontSize', +$event.target.value)" class="num-input" min="6" />
+            <input type="number" :value="sel.fontSize || 16" @change="commitProp('fontSize', +$event.target.value)" class="num-input" min="6" />
           </div>
           <div class="prop-cell">
             <label>行高</label>
-            <input type="number" :value="sel.lineHeight || 1.5" @change="updateProp('lineHeight', +$event.target.value)" class="num-input" min="0.5" step="0.1" />
+            <input type="number" :value="sel.lineHeight || 1.5" @change="commitProp('lineHeight', +$event.target.value)" class="num-input" min="0.5" step="0.1" />
           </div>
         </div>
         <div class="prop-row">
           <label>字体</label>
-          <select class="select-input" :value="sel.fontFamily || 'Inter, sans-serif'" @change="updateProp('fontFamily', $event.target.value)">
+          <select class="select-input" :value="sel.fontFamily || 'Inter, sans-serif'" @change="commitProp('fontFamily', $event.target.value)">
             <option value="Inter, sans-serif">Inter</option>
             <option value="'PingFang SC', sans-serif">PingFang SC</option>
             <option value="Georgia, serif">Georgia</option>
@@ -155,7 +159,7 @@
         </div>
         <div class="prop-row">
           <label>粗细</label>
-          <select class="select-input" :value="sel.fontWeight || 'normal'" @change="updateProp('fontWeight', $event.target.value)">
+          <select class="select-input" :value="sel.fontWeight || 'normal'" @change="commitProp('fontWeight', $event.target.value)">
             <option value="normal">Regular</option>
             <option value="500">Medium</option>
             <option value="600">SemiBold</option>
@@ -185,7 +189,7 @@
         <div class="section-title">图片</div>
         <div class="prop-row">
           <label>链接</label>
-          <input class="text-input" :value="sel.src || ''" @change="updateProp('src', $event.target.value)" placeholder="输入图片URL..." />
+          <input class="text-input" :value="sel.src || ''" @change="commitProp('src', $event.target.value)" placeholder="输入图片URL..." />
         </div>
       </div>
 
@@ -194,7 +198,7 @@
         <div class="section-title">图标</div>
         <div class="prop-row">
           <label>类型</label>
-          <select class="select-input" :value="sel.iconType || 'star'" @change="updateProp('iconType', $event.target.value)">
+          <select class="select-input" :value="sel.iconType || 'star'" @change="commitProp('iconType', $event.target.value)">
             <option value="star">星星</option>
             <option value="heart">心形</option>
             <option value="circle">圆形</option>
@@ -211,15 +215,15 @@
         <div class="section-title">状态</div>
         <div class="prop-row">
           <label>可见</label>
-          <label class="toggle"><input type="checkbox" :checked="sel.visible !== false" @change="updateProp('visible', $event.target.checked)" /><span></span></label>
+          <label class="toggle"><input type="checkbox" :checked="sel.visible !== false" @change="commitProp('visible', $event.target.checked)" /><span></span></label>
         </div>
         <div class="prop-row">
           <label>锁定</label>
-          <label class="toggle"><input type="checkbox" :checked="sel.locked" @change="updateProp('locked', $event.target.checked)" /><span></span></label>
+          <label class="toggle"><input type="checkbox" :checked="sel.locked" @change="commitProp('locked', $event.target.checked)" /><span></span></label>
         </div>
         <div class="prop-row">
           <label>层级</label>
-          <input type="number" :value="sel.zIndex || 0" @change="updateProp('zIndex', +$event.target.value)" class="num-input" min="0" />
+          <input type="number" :value="sel.zIndex || 0" @change="commitProp('zIndex', +$event.target.value)" class="num-input" min="0" />
         </div>
       </div>
 
@@ -238,12 +242,18 @@ import { store, currentPage, selectedElements, updateElement, removeSelected, sa
 const sel = computed(() => selectedElements.value.length === 1 ? selectedElements.value[0] : null)
 const typeLabels = { rectangle: '矩形', circle: '圆形', triangle: '三角形', text: '文本', button: '按钮', input: '输入框', card: '卡片', navbar: '导航栏', image: '图片', icon: '图标', divider: '分割线' }
 const typeLabel = computed(() => typeLabels[sel.value?.type] || sel.value?.type || '')
-const hasText = computed(() => ['text', 'button', 'navbar'].includes(sel.value?.type))
+const hasText = computed(() => ['text', 'button', 'navbar', 'input'].includes(sel.value?.type))
 
 const elementName = ref('')
 watch(sel, (v) => { if (v) elementName.value = v.name || '' })
 
 function updateProp(key, value) {
+  if (sel.value) {
+    updateElement(sel.value.id, { [key]: value })
+  }
+}
+
+function commitProp(key, value) {
   if (sel.value) {
     updateElement(sel.value.id, { [key]: value })
     saveHistory()
@@ -252,7 +262,7 @@ function updateProp(key, value) {
 
 function toggleStyle(prop, activeVal, inactiveVal) {
   if (sel.value) {
-    updateProp(prop, sel.value[prop] === activeVal ? inactiveVal : activeVal)
+    commitProp(prop, sel.value[prop] === activeVal ? inactiveVal : activeVal)
   }
 }
 

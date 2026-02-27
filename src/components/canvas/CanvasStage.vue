@@ -17,7 +17,7 @@
     <!-- Canvas transform wrapper -->
     <div class="canvas-transform" :style="transformStyle">
       <!-- Page background -->
-      <div class="page-canvas" :style="pageStyle" @mousedown.stop="onPageBgClick">
+      <div class="page-canvas" :style="pageStyle" @mousedown="onPageBgMousedown">
         <!-- Elements -->
         <template v-for="el in sortedElements" :key="el.id">
           <ElementRenderer
@@ -26,7 +26,7 @@
             :editing="store.editingTextId === el.id"
             :zoom="store.zoom"
             @mousedown.stop="onElementMousedown($event, el)"
-            @dblclick.stop="onElementDblClick($event, el)"
+            @dblclick.stop="onElementDblClick(el)"
             @update="onElementUpdate(el.id, $event)"
             @endEdit="store.editingTextId = null"
           />
@@ -101,9 +101,11 @@ const rubberBandStyle = computed(() => ({
 let isPanning = false
 let panStart = { x: 0, y: 0 }
 let isDraggingElement = false
+let didDrag = false   // true if mouse actually moved while dragging element
 let dragStart = { x: 0, y: 0 }
 let elementsStartPos = []
 let spaceDown = false
+let rubberBandStartedOnElement = false
 
 function screenToCanvas(sx, sy) {
   const rect = stageRef.value?.getBoundingClientRect() || { left: 0, top: 0 }
@@ -121,6 +123,7 @@ function onStageMousedown(e) {
     return
   }
   if (e.button === 0 && store.tool === 'select') {
+    rubberBandStartedOnElement = false
     const cp = screenToCanvas(e.clientX, e.clientY)
     rubberBand.active = true
     rubberBand.startX = cp.x
@@ -132,17 +135,24 @@ function onStageMousedown(e) {
   }
 }
 
-function onPageBgClick(e) {
-  if (!isDraggingElement) {
+function onPageBgMousedown(e) {
+  // Clicking the page background (not an element) - deselect all & start rubber-band
+  // Do NOT stopPropagation so onStageMousedown also fires for rubber-band
+  if (!isDraggingElement && !spaceDown) {
     selectElement(null)
     store.editingTextId = null
   }
+  didDrag = false
 }
 
 function onElementMousedown(e, el) {
   if (e.button !== 0) return
   if (el.locked) return
   if (store.editingTextId === el.id) return
+
+  // Prevent rubber-band from starting when clicking an element
+  rubberBandStartedOnElement = true
+  rubberBand.active = false
 
   if (!store.selectedIds.includes(el.id)) {
     selectElement(el.id, e.shiftKey || e.metaKey || e.ctrlKey)
@@ -152,6 +162,7 @@ function onElementMousedown(e, el) {
   }
 
   isDraggingElement = true
+  didDrag = false
   store.isDragging = true
   dragStart = { x: e.clientX, y: e.clientY }
   elementsStartPos = store.selectedIds.map(id => {
@@ -160,21 +171,26 @@ function onElementMousedown(e, el) {
   }).filter(Boolean)
 
   const onUp = () => {
-    if (isDraggingElement) saveHistory()
+    if (isDraggingElement && didDrag) saveHistory()
     isDraggingElement = false
+    didDrag = false
     store.isDragging = false
     window.removeEventListener('mouseup', onUp)
   }
   window.addEventListener('mouseup', onUp)
 }
 
-function onElementDblClick(e, el) {
-  if (el.type === 'text' || el.type === 'button' || el.type === 'navbar') {
+function onElementDblClick(el) {
+  if (['text', 'button', 'navbar', 'input'].includes(el.type)) {
     store.editingTextId = el.id
   }
 }
 
 function onDblClick(e) {}
+
+function onElementUpdate(id, props) {
+  updateElement(id, props)
+}
 
 function onMouseMove(e) {
   if (isPanning) {
@@ -185,6 +201,10 @@ function onMouseMove(e) {
   if (isDraggingElement) {
     const dx = (e.clientX - dragStart.x) / store.zoom
     const dy = (e.clientY - dragStart.y) / store.zoom
+    // Only count as actual drag if moved more than 2px
+    if (Math.abs(e.clientX - dragStart.x) > 2 || Math.abs(e.clientY - dragStart.y) > 2) {
+      didDrag = true
+    }
     elementsStartPos.forEach(({ id, x, y }) => {
       let nx = x + dx
       let ny = y + dy
@@ -196,7 +216,7 @@ function onMouseMove(e) {
     })
     return
   }
-  if (rubberBand.active) {
+  if (rubberBand.active && !rubberBandStartedOnElement) {
     const cp = screenToCanvas(e.clientX, e.clientY)
     const x = Math.min(cp.x, rubberBand.startX)
     const y = Math.min(cp.y, rubberBand.startY)
@@ -212,7 +232,7 @@ function onMouseMove(e) {
 function onMouseUp(e) {
   if (isPanning) { isPanning = false; return }
   if (rubberBand.active) {
-    if (rubberBand.w > 5 || rubberBand.h > 5) {
+    if (!rubberBandStartedOnElement && (rubberBand.w > 5 || rubberBand.h > 5)) {
       const ids = currentPage.value.elements.filter(el => {
         return el.x < rubberBand.x + rubberBand.w &&
           el.x + el.width > rubberBand.x &&
@@ -220,12 +240,11 @@ function onMouseUp(e) {
           el.y + el.height > rubberBand.y
       }).map(el => el.id)
       store.selectedIds = ids
-    } else {
-      if (!isDraggingElement) selectElement(null)
     }
     rubberBand.active = false
     rubberBand.w = 0
     rubberBand.h = 0
+    rubberBandStartedOnElement = false
   }
 }
 
@@ -282,19 +301,64 @@ function zoomIn() { setZoom(store.zoom * 1.2) }
 function zoomOut() { setZoom(store.zoom / 1.2) }
 function resetZoom() { store.zoom = 1; store.panX = 40; store.panY = 40 }
 
+// Check if the event target is a text input / textarea / contenteditable
+// If so, skip canvas keyboard shortcuts so typing doesn't delete elements
+function isInputFocused() {
+  const el = document.activeElement
+  if (!el) return false
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+  if (el.isContentEditable) return true
+  return false
+}
+
 function onKeydown(e) {
-  if (e.code === 'Space' && !store.editingTextId) { spaceDown = true; e.preventDefault() }
+  // Space — only when not typing anywhere
+  if (e.code === 'Space' && !isInputFocused()) { spaceDown = true; e.preventDefault() }
+  
+  // Undo/Redo — allow even in inputs (standard browser behavior via ctrl/meta)
   if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) { undo(); e.preventDefault() }
   if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { redo(); e.preventDefault() }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'c') { copySelected(); e.preventDefault() }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'v') { paste(); e.preventDefault() }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'd') { duplicateSelected(); e.preventDefault() }
-  if ((e.key === 'Delete' || e.key === 'Backspace') && !store.editingTextId) { removeSelected(); e.preventDefault() }
-  if (e.key === 'Escape') { store.selectedIds = []; store.editingTextId = null }
-  if (e.key === 'ArrowLeft' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { x: el.x - (e.shiftKey ? 10 : 1) }) }) }
-  if (e.key === 'ArrowRight' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { x: el.x + (e.shiftKey ? 10 : 1) }) }) }
-  if (e.key === 'ArrowUp' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { y: el.y - (e.shiftKey ? 10 : 1) }) }); e.preventDefault() }
-  if (e.key === 'ArrowDown' && !store.editingTextId) { store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { y: el.y + (e.shiftKey ? 10 : 1) }) }); e.preventDefault() }
+  
+  // Copy / Paste / Duplicate — skip if typing in an input
+  if (!isInputFocused()) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'c') { copySelected(); e.preventDefault() }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'v') { paste(); e.preventDefault() }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'd') { duplicateSelected(); e.preventDefault() }
+  }
+
+  // Delete / Backspace — ONLY when not focused in any input AND not editing a canvas text element
+  if ((e.key === 'Delete' || e.key === 'Backspace') && !store.editingTextId && !isInputFocused()) {
+    removeSelected()
+    e.preventDefault()
+  }
+
+  // Escape — always clears selection & text editing
+  if (e.key === 'Escape') {
+    store.selectedIds = []
+    store.editingTextId = null
+  }
+
+  // Arrow keys — only when NOT focused in any input
+  if (!isInputFocused() && !store.editingTextId) {
+    const step = e.shiftKey ? 10 : 1
+    if (e.key === 'ArrowLeft') {
+      store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { x: el.x - step }) })
+      e.preventDefault()
+    }
+    if (e.key === 'ArrowRight') {
+      store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { x: el.x + step }) })
+      e.preventDefault()
+    }
+    if (e.key === 'ArrowUp') {
+      store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { y: el.y - step }) })
+      e.preventDefault()
+    }
+    if (e.key === 'ArrowDown') {
+      store.selectedIds.forEach(id => { const el = currentPage.value.elements.find(e2 => e2.id === id); if (el) updateElement(id, { y: el.y + step }) })
+      e.preventDefault()
+    }
+  }
 }
 
 function onKeyup(e) {
