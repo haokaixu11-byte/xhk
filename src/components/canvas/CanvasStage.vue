@@ -28,6 +28,7 @@
             @mousedown.stop="onElementMousedown($event, el)"
             @dblclick.stop="onElementDblClick(el)"
             @update="onElementUpdate(el.id, $event)"
+            @commit="onElementCommit(el.id, $event)"
             @endEdit="store.editingTextId = null"
           />
         </template>
@@ -190,6 +191,10 @@ function onDblClick(e) {}
 
 function onElementUpdate(id, props) {
   updateElement(id, props)
+}
+function onElementCommit(id, props) {
+  updateElement(id, props)
+  saveHistory()
 }
 
 function onMouseMove(e) {

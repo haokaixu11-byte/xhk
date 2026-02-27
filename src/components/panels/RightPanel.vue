@@ -120,15 +120,15 @@
         <div class="section-title">文字</div>
         <div class="prop-row" v-if="sel.type === 'text'">
           <label>内容</label>
-          <textarea class="text-area" :value="sel.text" @input="updateProp('text', $event.target.value)" @blur="commitProp('text', sel.text)" rows="3"></textarea>
+          <textarea class="text-area" v-model="selText" @blur="commitProp('text', sel.text)" rows="3"></textarea>
         </div>
         <div v-else-if="sel.type === 'input'" class="prop-row">
           <label>占位符</label>
-          <input class="text-input" :value="sel.placeholder" @input="updateProp('placeholder', $event.target.value)" @blur="commitProp('placeholder', sel.placeholder)" placeholder="请输入内容..." />
+          <input class="text-input" v-model="selPlaceholder" @blur="commitProp('placeholder', sel.placeholder)" placeholder="请输入内容..." />
         </div>
         <div v-else class="prop-row">
           <label>内容</label>
-          <input class="text-input" :value="sel.text" @input="updateProp('text', $event.target.value)" @blur="commitProp('text', sel.text)" />
+          <input class="text-input" v-model="selText" @blur="commitProp('text', sel.text)" />
         </div>
         <div class="prop-row">
           <label>颜色</label>
@@ -246,6 +246,16 @@ const hasText = computed(() => ['text', 'button', 'navbar', 'input'].includes(se
 
 const elementName = ref('')
 watch(sel, (v) => { if (v) elementName.value = v.name || '' })
+
+// Computed v-model helpers for text fields — keep UI in sync with store
+const selText = computed({
+  get: () => sel.value?.text ?? '',
+  set: (v) => updateProp('text', v),
+})
+const selPlaceholder = computed({
+  get: () => sel.value?.placeholder ?? '',
+  set: (v) => updateProp('placeholder', v),
+})
 
 function updateProp(key, value) {
   if (sel.value) {

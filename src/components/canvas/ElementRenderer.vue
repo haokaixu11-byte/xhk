@@ -157,15 +157,18 @@ const props = defineProps({
   editing: { type: Boolean, default: false },
   zoom: { type: Number, default: 1 },
 })
-const emit = defineEmits(['mousedown', 'dblclick', 'update', 'endEdit'])
+const emit = defineEmits(['mousedown', 'dblclick', 'update', 'commit', 'endEdit'])
 
 const textareaRef = ref(null)
 const localText = ref('')
+// Track whether we are actively in editing so blur can commit regardless of props.editing
+let wasEditing = false
 
-// Sync localText whenever we enter editing mode
-watch(() => props.editing, (val) => {
-  if (val) {
-    // For input type, edit the placeholder; for others edit the text
+// Sync localText whenever we ENTER editing mode
+watch(() => props.editing, (val, oldVal) => {
+  if (val && !oldVal) {
+    // Entering edit mode: load current text
+    wasEditing = true
     if (props.element.type === 'input') {
       localText.value = props.element.placeholder || ''
     } else {
@@ -182,26 +185,28 @@ watch(() => props.editing, (val) => {
   }
 })
 
-// Also watch element.text to keep localText in sync when panel updates text while editing
-watch(() => props.element.text, (val) => {
-  if (!props.editing) return  // only update localText if NOT in edit mode (panel-driven updates)
-  // Don't override while user is typing in textarea
-})
-
-// Watch element.placeholder for input type
-watch(() => props.element.placeholder, (val) => {
-  if (!props.editing) return
-})
-
-function commitText() {
-  if (props.editing) {
-    if (props.element.type === 'input') {
-      emit('update', { placeholder: localText.value })
-    } else {
-      emit('update', { text: localText.value })
-    }
-    emit('endEdit')
+// Propagate localText changes to store in real-time so RightPanel stays in sync
+watch(localText, (val) => {
+  if (!wasEditing) return
+  if (props.element.type === 'input') {
+    emit('update', { placeholder: val })  // live update, no history
+  } else {
+    emit('update', { text: val })          // live update, no history
   }
+})
+
+// Called when textarea/input loses focus — ALWAYS commit regardless of props.editing
+// because store.editingTextId may have already been cleared by an outside click
+function commitText() {
+  if (!wasEditing) return
+  wasEditing = false
+  // Emit 'commit' (with history save) on final blur
+  if (props.element.type === 'input') {
+    emit('commit', { placeholder: localText.value })
+  } else {
+    emit('commit', { text: localText.value })
+  }
+  emit('endEdit')
 }
 
 function onWrapperMousedown(e) {
