@@ -1,5 +1,5 @@
 <template>
-  <div class="canvas-stage" ref="stageRef" @mousedown="onStageMousedown" @mousemove="onMouseMove" @mouseup="onMouseUp" @wheel="onWheel" @contextmenu.prevent="onContextMenu" @dblclick="onDblClick">
+  <div class="canvas-stage" ref="stageRef" @mousedown="onStageMousedown" @mousemove="onMouseMove" @mouseup="onMouseUp" @wheel="onWheel" @contextmenu.prevent="onContextMenu" @dblclick="onDblClick" @dragover.prevent @drop.prevent="onDrop">
     <!-- Grid -->
     <svg v-if="store.showGrid" class="canvas-grid" :width="stageW" :height="stageH">
       <defs>
@@ -388,10 +388,19 @@ function onResize() {
  * Also called from onKeydown as a fallback via navigator.clipboard.read().
  */
 function onPaste(e) {
-  // Skip if user is typing in a real input/textarea (not canvas editing)
-  if (isInputFocused()) return
   const items = e.clipboardData?.items
   if (!items) return
+
+  // Check if clipboard contains an image first
+  let hasImage = false
+  for (const item of items) {
+    if (item.type.startsWith('image/')) { hasImage = true; break }
+  }
+
+  // If there's an image in clipboard, always process it (ignore input focus)
+  // If it's text/other, skip when an input is focused (let the browser handle it)
+  if (!hasImage && isInputFocused()) return
+
   for (const item of items) {
     if (item.type.startsWith('image/')) {
       e.preventDefault()
@@ -399,8 +408,7 @@ function onPaste(e) {
       if (!file) continue
       const reader = new FileReader()
       reader.onload = (ev) => {
-        const dataUrl = ev.target.result
-        placeImageOnCanvas(dataUrl, file.name || 'pasted-image')
+        placeImageOnCanvas(ev.target.result, file.name || 'pasted-image')
       }
       reader.readAsDataURL(file)
       return  // only handle first image
@@ -442,25 +450,32 @@ async function pasteFromSystemClipboard() {
  * Place a DataURL image onto the canvas, centered in the current viewport.
  * Auto-scales to fit within the page while keeping the natural aspect ratio.
  */
-function placeImageOnCanvas(dataUrl, name) {
+function placeImageOnCanvas(dataUrl, name, dropX = null, dropY = null) {
   const img = new Image()
   img.onload = () => {
     const page = currentPage.value
     const pageW = page?.width || 1440
     const pageH = page?.height || 900
 
-    // Scale to at most half the page, preserving aspect ratio
+    // Scale to at most 60% of the page, preserving aspect ratio
     const maxW = Math.min(img.naturalWidth, pageW * 0.6)
     const maxH = Math.min(img.naturalHeight, pageH * 0.6)
     const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1)
     const w = Math.round(img.naturalWidth * scale)
     const h = Math.round(img.naturalHeight * scale)
 
-    // Center in the visible viewport area
-    const viewCenterX = (stageW.value / 2 - store.panX) / store.zoom
-    const viewCenterY = (stageH.value / 2 - store.panY) / store.zoom
-    const x = Math.round(Math.max(0, Math.min(viewCenterX - w / 2, pageW - w)))
-    const y = Math.round(Math.max(0, Math.min(viewCenterY - h / 2, pageH - h)))
+    let x, y
+    if (dropX !== null && dropY !== null) {
+      // Place at drop position, clamped to page bounds
+      x = Math.round(Math.max(0, Math.min(dropX - w / 2, pageW - w)))
+      y = Math.round(Math.max(0, Math.min(dropY - h / 2, pageH - h)))
+    } else {
+      // Center in the visible viewport area
+      const viewCenterX = (stageW.value / 2 - store.panX) / store.zoom
+      const viewCenterY = (stageH.value / 2 - store.panY) / store.zoom
+      x = Math.round(Math.max(0, Math.min(viewCenterX - w / 2, pageW - w)))
+      y = Math.round(Math.max(0, Math.min(viewCenterY - h / 2, pageH - h)))
+    }
 
     const el = addElement('image', x, y)
     updateElement(el.id, {
@@ -471,6 +486,28 @@ function placeImageOnCanvas(dataUrl, name) {
     })
   }
   img.src = dataUrl
+}
+
+/**
+ * Handle drag-and-drop of image files onto the canvas.
+ * Drop position is used instead of viewport center.
+ */
+function onDrop(e) {
+  const files = e.dataTransfer?.files
+  if (!files?.length) return
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      // Convert drop position to canvas coordinates
+      const rect = stageRef.value.getBoundingClientRect()
+      const dropX = (e.clientX - rect.left - store.panX) / store.zoom
+      const dropY = (e.clientY - rect.top - store.panY) / store.zoom
+      placeImageOnCanvas(ev.target.result, file.name || 'dropped-image', dropX, dropY)
+    }
+    reader.readAsDataURL(file)
+    break // one image at a time
+  }
 }
 
 onMounted(() => {
