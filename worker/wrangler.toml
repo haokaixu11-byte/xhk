@@ -1,0 +1,10 @@
+name = "protoflow-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+kv_namespaces = [
+  { binding = "PROTO_SHARES", id = "ccbdfa01ba814cd1a50aab2b4202d05f" }
+]
+
+[vars]
+ALLOWED_ORIGIN = "https://protoflow-editor.pages.dev"
