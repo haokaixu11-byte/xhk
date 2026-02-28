@@ -329,10 +329,9 @@ function onKeydown(e) {
   if (!isInputFocused()) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'c') { copySelected(); e.preventDefault() }
     if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
-      // Try system clipboard first (images from outside); fall back to internal clipboard
-      pasteFromSystemClipboard().then(handled => {
-        if (!handled) paste()
-      })
+      // onPaste() (window 'paste' event) handles images via clipboardData + navigator.clipboard.read()
+      // Here we only need to handle internal element paste (store.clipboard)
+      paste()
       e.preventDefault()
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'd') { duplicateSelected(); e.preventDefault() }
@@ -382,68 +381,70 @@ function onResize() {
 }
 
 /**
- * Handle system paste event (fired by browser when Ctrl+V is pressed
- * while the document has focus). Intercepts image/file items from
- * the DataTransfer and places them on the canvas as image elements.
- * Also called from onKeydown as a fallback via navigator.clipboard.read().
+ * Handle system paste event.
+ * Strategy:
+ *   1. Try e.clipboardData.items first (works in most cases)
+ *   2. Fall back to navigator.clipboard.read() (needed for some browsers/OS combos)
+ *   3. If no image found and input is focused → let browser handle text paste normally
  */
-function onPaste(e) {
+async function onPaste(e) {
   const items = e.clipboardData?.items
-  if (!items) return
+  const files = e.clipboardData?.files
 
-  // Check if clipboard contains an image first
-  let hasImage = false
-  for (const item of items) {
-    if (item.type.startsWith('image/')) { hasImage = true; break }
-  }
-
-  // If there's an image in clipboard, always process it (ignore input focus)
-  // If it's text/other, skip when an input is focused (let the browser handle it)
-  if (!hasImage && isInputFocused()) return
-
-  for (const item of items) {
-    if (item.type.startsWith('image/')) {
-      e.preventDefault()
-      const file = item.getAsFile()
-      if (!file) continue
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        placeImageOnCanvas(ev.target.result, file.name || 'pasted-image')
+  // ── Path 1: clipboardData.items contains an image ─────────────────
+  if (items && items.length > 0) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (!file) continue
+        const reader = new FileReader()
+        reader.onload = (ev) => placeImageOnCanvas(ev.target.result, file.name || 'pasted-image')
+        reader.readAsDataURL(file)
+        return
       }
-      reader.readAsDataURL(file)
-      return  // only handle first image
     }
   }
-}
 
-/**
- * Async fallback: read system clipboard via Permissions API.
- * Returns true if an image was found and placed, false otherwise.
- */
-async function pasteFromSystemClipboard() {
-  try {
-    if (!navigator.clipboard?.read) return false
-    const clipItems = await navigator.clipboard.read()
-    for (const clipItem of clipItems) {
-      for (const type of clipItem.types) {
-        if (type.startsWith('image/')) {
-          const blob = await clipItem.getType(type)
-          const reader = new FileReader()
-          await new Promise((resolve) => {
-            reader.onload = (ev) => {
-              placeImageOnCanvas(ev.target.result, 'clipboard-image')
-              resolve()
-            }
+  // ── Path 2: clipboardData.files contains an image ─────────────────
+  if (files && files.length > 0) {
+    const file = files[0]
+    if (file.type.startsWith('image/')) {
+      e.preventDefault()
+      const reader = new FileReader()
+      reader.onload = (ev) => placeImageOnCanvas(ev.target.result, file.name || 'pasted-image')
+      reader.readAsDataURL(file)
+      return
+    }
+  }
+
+  // ── Path 3: navigator.clipboard.read() for real system screenshots ─
+  // This is the MAIN path for screenshots from macOS/Windows native tools.
+  // e.clipboardData is often empty for native screenshots; we must use the API.
+  if (navigator.clipboard?.read) {
+    try {
+      const clipItems = await navigator.clipboard.read()
+      for (const clipItem of clipItems) {
+        for (const type of clipItem.types) {
+          if (type.startsWith('image/')) {
+            e.preventDefault()
+            const blob = await clipItem.getType(type)
+            const reader = new FileReader()
+            reader.onload = (ev) => placeImageOnCanvas(ev.target.result, 'screenshot')
             reader.readAsDataURL(blob)
-          })
-          return true
+            return
+          }
         }
       }
+    } catch (_) {
+      // Permission denied or API not available, fall through to text paste
     }
-  } catch (_) {
-    // Permission denied or API not available — handled by caller falling back to paste()
   }
-  return false
+
+  // ── Path 4: No image found → let browser handle text paste normally ─
+  if (isInputFocused()) return  // let the focused input receive text
+  // Otherwise, non-image paste on canvas = do nothing
 }
 
 /**
