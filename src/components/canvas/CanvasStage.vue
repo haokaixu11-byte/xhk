@@ -59,7 +59,7 @@
 <script setup>
 import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { v4 as uuidv4 } from 'uuid'
-import { store, currentPage, sortedElements, selectElement, updateElement, removeSelected, duplicateSelected, copySelected, paste, setZoom, undo, redo, saveHistory, bringToFront, sendToBack, bringForward, sendBackward } from '../../store/editorStore.js'
+import { store, currentPage, sortedElements, selectElement, updateElement, removeSelected, duplicateSelected, copySelected, paste, setZoom, undo, redo, saveHistory, bringToFront, sendToBack, bringForward, sendBackward, addElement } from '../../store/editorStore.js'
 import ElementRenderer from './ElementRenderer.vue'
 import SelectionBox from './SelectionBox.vue'
 import ContextMenu from './ContextMenu.vue'
@@ -328,7 +328,13 @@ function onKeydown(e) {
   // Copy / Paste / Duplicate — skip if typing in an input
   if (!isInputFocused()) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'c') { copySelected(); e.preventDefault() }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'v') { paste(); e.preventDefault() }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+      // Try system clipboard first (images from outside); fall back to internal clipboard
+      pasteFromSystemClipboard().then(handled => {
+        if (!handled) paste()
+      })
+      e.preventDefault()
+    }
     if ((e.metaKey || e.ctrlKey) && e.key === 'd') { duplicateSelected(); e.preventDefault() }
   }
 
@@ -375,10 +381,103 @@ function onResize() {
   stageH.value = window.innerHeight
 }
 
+/**
+ * Handle system paste event (fired by browser when Ctrl+V is pressed
+ * while the document has focus). Intercepts image/file items from
+ * the DataTransfer and places them on the canvas as image elements.
+ * Also called from onKeydown as a fallback via navigator.clipboard.read().
+ */
+function onPaste(e) {
+  // Skip if user is typing in a real input/textarea (not canvas editing)
+  if (isInputFocused()) return
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (!file) continue
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const dataUrl = ev.target.result
+        placeImageOnCanvas(dataUrl, file.name || 'pasted-image')
+      }
+      reader.readAsDataURL(file)
+      return  // only handle first image
+    }
+  }
+}
+
+/**
+ * Async fallback: read system clipboard via Permissions API.
+ * Returns true if an image was found and placed, false otherwise.
+ */
+async function pasteFromSystemClipboard() {
+  try {
+    if (!navigator.clipboard?.read) return false
+    const clipItems = await navigator.clipboard.read()
+    for (const clipItem of clipItems) {
+      for (const type of clipItem.types) {
+        if (type.startsWith('image/')) {
+          const blob = await clipItem.getType(type)
+          const reader = new FileReader()
+          await new Promise((resolve) => {
+            reader.onload = (ev) => {
+              placeImageOnCanvas(ev.target.result, 'clipboard-image')
+              resolve()
+            }
+            reader.readAsDataURL(blob)
+          })
+          return true
+        }
+      }
+    }
+  } catch (_) {
+    // Permission denied or API not available — handled by caller falling back to paste()
+  }
+  return false
+}
+
+/**
+ * Place a DataURL image onto the canvas, centered in the current viewport.
+ * Auto-scales to fit within the page while keeping the natural aspect ratio.
+ */
+function placeImageOnCanvas(dataUrl, name) {
+  const img = new Image()
+  img.onload = () => {
+    const page = currentPage.value
+    const pageW = page?.width || 1440
+    const pageH = page?.height || 900
+
+    // Scale to at most half the page, preserving aspect ratio
+    const maxW = Math.min(img.naturalWidth, pageW * 0.6)
+    const maxH = Math.min(img.naturalHeight, pageH * 0.6)
+    const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1)
+    const w = Math.round(img.naturalWidth * scale)
+    const h = Math.round(img.naturalHeight * scale)
+
+    // Center in the visible viewport area
+    const viewCenterX = (stageW.value / 2 - store.panX) / store.zoom
+    const viewCenterY = (stageH.value / 2 - store.panY) / store.zoom
+    const x = Math.round(Math.max(0, Math.min(viewCenterX - w / 2, pageW - w)))
+    const y = Math.round(Math.max(0, Math.min(viewCenterY - h / 2, pageH - h)))
+
+    const el = addElement('image', x, y)
+    updateElement(el.id, {
+      src: dataUrl,
+      width: w,
+      height: h,
+      name: name.replace(/\.[^.]+$/, '') || '图片',
+    })
+  }
+  img.src = dataUrl
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('keyup', onKeyup)
   window.addEventListener('resize', onResize)
+  window.addEventListener('paste', onPaste)
   store.panX = 40
   store.panY = 40
 })
@@ -386,6 +485,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keyup', onKeyup)
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('paste', onPaste)
 })
 </script>
 
